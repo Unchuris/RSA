@@ -1,132 +1,165 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
 using System.Numerics;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.IO;
+using System.Security.Cryptography;
 
 namespace Unchuris_04 {
     class Rsa {
 
-        private static BigInteger e, n, d = 0;
+        private static BigInteger e = 65537;
+        private static BigInteger n, d = 0;
+        private static int blockSize = 0;
+        private static readonly int HASH_SIZE = 16;
+        private static readonly int TRASH_BLOCK = HASH_SIZE + 4;
 
         public static void Encrypt(byte[] source) {
             if (!GetPublicKey()) return;
 
-            List<byte[]> resultList = new List<byte[]>();
+            StringBuilder bits = new StringBuilder(source.ToBitsString());
 
-            int rsaBlockSize = Generate.KEY_LENGT_BYTE / 2 - 1;
+            StringBuilder result = new StringBuilder();
 
-            int blockSize = rsaBlockSize - OAEP.MIN_PADDING_SIZE;
+            int rsaBlockSize = blockSize;
 
-            int round = (int)Math.Ceiling((double)source.Length / blockSize);
+            byte[] startBytes = GetBytesToCheckMessage(bits.ToString());
 
-            for (int i = 0; i < round; i++) {
-                byte[] modifiedText = OAEP.ApplyOAEP(source.SubArray(i * blockSize, blockSize), rsaBlockSize);
-                resultList.Add(EncryptBlock(modifiedText));
+            int addBitsCount = rsaBlockSize - (bits.Length % rsaBlockSize);
+
+            for (int i = 0; i < addBitsCount; i++) {
+                bits.Append('0');
             }
 
-            byte[] encrtypted = resultList.SelectMany(a => a).ToArray();
+            for (int i = 0; i < bits.Length; i += rsaBlockSize) {
+                string blockMessage = bits.ToString(i, rsaBlockSize);
+                result.Append(EncryptBlock(blockMessage));
+            }
 
-            CustomFile.WriteAllBytes(encrtypted, "C:\\Users\\vlady\\Desktop\\empty1.txt");
+            byte[] encrypted = startBytes.Concat(result.ToString().ToBytes()).ToArray();
+
+            CustomFile.WriteAllBytes(encrypted, "C:\\Users\\vlady\\Desktop\\result.txt");
         }
 
         public static void Decrypt(byte[] source) {
-            if (!GetPrivateKey()) return;
-
-            List<byte[]> resultList = new List<byte[]>();
-
-            int rsaBlockSize = Generate.KEY_LENGT_BYTE / 2 - 1;
-
-            int rsaBlockSizeInc = rsaBlockSize + 1;
-
-            int blockSize = rsaBlockSize - OAEP.MIN_PADDING_SIZE;
-
-            int round = (int)Math.Ceiling((double)source.Length / rsaBlockSizeInc);
-
-            for (int i = 0; i < round; i++) {
-                byte[] messageBlock = source.SubArray(i * rsaBlockSizeInc, rsaBlockSizeInc);
-                byte[] decrypteBlock = DecryptBlock(messageBlock);
-                byte[] decrypte = OAEP.RemoveOAEP(decrypteBlock);
-                if (decrypte == null) {
-                    Console.WriteLine("Блок " + (i + 1) + " был поврежден, ваш файл или ключ повреждены.");
-                    resultList.Add(messageBlock);
-                } else {
-                    resultList.Add(decrypte);
-                }
+            if (source.Length <= TRASH_BLOCK) {
+                ShowErrorMessage();
+                return;
             }
 
-            byte[] decrypted = resultList.SelectMany(i => i).ToArray();
+            if (!GetPrivateKey()) return;
 
-            CustomFile.WriteAllBytes(decrypted);
+            StringBuilder result = new StringBuilder();
+
+            int rsaBlockSize = Generate.KEY_LENGT_BITS;
+
+            byte[] data = source.SubArray(TRASH_BLOCK, source.Length - TRASH_BLOCK);
+
+            StringBuilder bits = new StringBuilder(data.ToBitsString());
+
+            if (bits.Length % rsaBlockSize != 0) {
+                ShowErrorMessage();
+                return;
+            }
+
+            BigInteger messageRealLength = new BigInteger(source.SubArray(HASH_SIZE, 4).Concat(new byte[] { 0 }).ToArray());
+
+            for (int i = 0; i < bits.Length; i += rsaBlockSize) {
+                string blockMessage = bits.ToString(i, rsaBlockSize);
+                result.Append(DecryptBlock(blockMessage));
+            }
+
+            string dataBlock = result.ToString(0, (int)messageRealLength);
+
+            byte[] currentHashMessage = GetHash(dataBlock);
+
+            byte[] hashMessage = source.SubArray(0, HASH_SIZE);
+
+            if (currentHashMessage.SequenceEqual(hashMessage)) {
+                CustomFile.WriteAllBytes(dataBlock.ToBytes());
+            } else {
+                ShowErrorMessage();
+            }
         }
 
-        private static byte[] EncryptBlock(byte[] block) {
-            byte[] encryptBlock = new byte[block.Length + 1];
-
-            BigInteger bigInteger = new BigInteger(block.Concat(new byte[] { 0 }).ToArray());
-            byte[] encrypt = BigInteger.ModPow(bigInteger, e, n).ToByteArray();
-            Array.Copy(encrypt, 0, encryptBlock, 0, encrypt.Length);
-
-            return encryptBlock;
+        private static string EncryptBlock(string block) {
+            BigInteger bigInt = block.ToBigInteger();
+            string encrypt = BigInteger.ModPow(block.ToBigInteger(), e, n).ToBinaryString();
+            return encrypt.PadLeft(Generate.KEY_LENGT_BITS, '0');
         }
 
-        private static byte[] DecryptBlock(byte[] block) {
-            byte[] decryptBlock = new byte[block.Length - 1];
+        private static string DecryptBlock(string block) {
+            BigInteger bigInt = BigInteger.ModPow(block.ToBigInteger(), d, n);
+            string decrypt = bigInt.ToBinaryString();
+            return decrypt.PadLeft(blockSize - 1, '0'); 
+        }
 
-            BigInteger bigInteger = new BigInteger(block.Concat(new byte[] { 0 }).ToArray());
-            byte[] decrypt = BigInteger.ModPow(bigInteger, d, n).ToByteArray();
-            var size = decrypt.Length > decryptBlock.Length ? decryptBlock.Length : decrypt.Length;
-            Array.Copy(decrypt, 0, decryptBlock, 0, size);
+        private static byte[] GetBytesToCheckMessage(string bits) {
+            byte[] messageSize = new byte[4];
 
-            return decryptBlock;
+            messageSize[0] = (byte)(bits.Length % 256);
+            messageSize[1] = (byte)(bits.Length % 65536 / 256);
+            messageSize[2] = (byte)(bits.Length % 16777216 / 65536);
+            messageSize[3] = (byte)(bits.Length / 16777216);
+
+            byte[] result = new byte[HASH_SIZE + messageSize.Length];
+
+            Array.Copy(GetHash(bits), result, HASH_SIZE);
+
+            Array.Copy(messageSize, 0, result, HASH_SIZE, messageSize.Length);
+
+            return result;
+        }
+
+        private static byte[] GetHash(string bits) {
+            return MD5.Create().ComputeHash(Encoding.UTF8.GetBytes(bits));
+        }
+
+        private static void ShowErrorMessage() {
+            Console.WriteLine("Ошибка, зашифрованный файл был модифицирован.");
         }
 
         private static bool GetPublicKey() {
             byte[] key = CustomFile.OpenFile("открытого ключа");
 
-            if (key.Length != Generate.KEY_LENGT_BYTE) {
+            if (key.Length != Generate.KEY_LENGT_BYTE / 2) {
                 Console.WriteLine("Ключ поврежден!");
                 return false;
             }
 
-            e = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
-            n = new BigInteger(key.SubArray(Generate.KEY_LENGT_BYTE / 2, Generate.KEY_LENGT_BYTE / 2));
+            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
 
-            Console.WriteLine("Открытый ключ (e, n): ({0}\n {1}).", e.ToString("X"), n.ToString("X"));
+            blockSize = (int)Math.Floor(BigInteger.Log(n, 2));
             Console.WriteLine("Выполнение...");
-
             return true;
         }
 
         private static bool GetPrivateKey() {
             byte[] key = CustomFile.OpenFile("закрытого ключа");
 
-            if (key.Length != Generate.KEY_LENGT_BYTE) {
+            if (key.Length < Generate.KEY_LENGT_BYTE / 2) {
                 Console.WriteLine("Ключ поврежден!");
                 return false;
             }
 
-            d = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
-            n = new BigInteger(key.SubArray(Generate.KEY_LENGT_BYTE / 2, Generate.KEY_LENGT_BYTE / 2));
+            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
+            d = new BigInteger(key.SubArray(Generate.KEY_LENGT_BYTE / 2, Generate.KEY_LENGT_BYTE));
 
-            Console.WriteLine("Закрытый ключ (d, n): ({0}\n {1}).", d.ToString("X"), n.ToString("X"));
+            blockSize = (int)Math.Ceiling(BigInteger.Log(n, 2));
             Console.WriteLine("Выполнение...");
-
             return true;
         }
 
         public class Generate {
 
-            public static readonly int KEY_LENGT = 1024;
-            public static readonly int KEY_LENGT_BYTE = 512;
+            public static readonly int KEY_LENGT = 1024 * 2;
+            public static readonly int KEY_LENGT_BYTE = 512 * 2;
+            public static readonly int KEY_LENGT_BITS = 4096;
             private static BigInteger n, p, q;
             private static readonly Random rand = new Random();
 
             public static void GenerateKey() {
-                BigInteger fi, e, d;
+                BigInteger fi, d;
                 int size = KEY_LENGT_BYTE / 2;
 
                 do {
@@ -134,28 +167,23 @@ namespace Unchuris_04 {
 
                     fi = (p - 1) * (q - 1);
 
-                    for (e = n / 5; e < fi; e++) {
-                        if (Euclid.Gcd(fi, e) == 1)
-                            break;
-                    }
-
                     d = Euclid.ModInverse(e, fi);
 
                     if ((e * d) % fi != 1 && d != 0) {
                         GenerateKey();
                         return;
                     }
-                    
-                } while (e.ToByteArray().Length != size && n.ToByteArray().Length != size && d.ToByteArray().Length != size);
+
+                } while (n.ToByteArray().Length != size);
 
                 Console.WriteLine("Открытый ключ записан в файл public_key.txt, закрытый - в private_key.txt");
-                File.WriteAllBytes("public_key.txt", e.ToByteArray().Concat(n.ToByteArray()).ToArray());
-                File.WriteAllBytes("private_key.txt", d.ToByteArray().Concat(n.ToByteArray()).ToArray());
+                File.WriteAllBytes("public_key.txt", n.ToByteArray().ToArray());
+                File.WriteAllBytes("private_key.txt", n.ToByteArray().Concat(d.ToByteArray()).ToArray());
             }
 
             public static void generateNumber() {
                 q = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT);
-                p = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT);
+                p = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT - 1);
                 n = p * q;
             }
         }
