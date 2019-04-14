@@ -11,8 +11,7 @@ namespace Unchuris_04 {
         private static BigInteger e = 65537;
         private static BigInteger n, d = 0;
         private static int blockSize = 0;
-        private static readonly int HASH_SIZE = 16;
-        private static readonly int TRASH_BLOCK = HASH_SIZE + 4;
+        private static readonly int TRASH_BLOCK = 512;
 
         public static void Encrypt(byte[] source) {
             if (!GetPublicKey()) return;
@@ -23,20 +22,20 @@ namespace Unchuris_04 {
 
             int rsaBlockSize = blockSize;
 
-            byte[] startBytes = GetBytesToCheckMessage(bits.ToString());
-
             int addBitsCount = rsaBlockSize - (bits.Length % rsaBlockSize);
 
-            for (int i = 0; i < addBitsCount; i++) {
-                bits.Append('0');
-            }
+            bits.Append(Extensions.GetRandomString(addBitsCount));
+
+            string add = Convert.ToString(addBitsCount, 2);
+
+            bits.Append(add.PadLeftRandom(blockSize));
 
             for (int i = 0; i < bits.Length; i += rsaBlockSize) {
                 string blockMessage = bits.ToString(i, rsaBlockSize);
                 result.Append(EncryptBlock(blockMessage));
             }
 
-            byte[] encrypted = startBytes.Concat(result.ToString().ToBytes()).ToArray();
+            byte[] encrypted = result.ToString().ToBytes().ToArray();
 
             CustomFile.WriteAllBytes(encrypted, "C:\\Users\\vlady\\Desktop\\result.txt");
         }
@@ -53,33 +52,24 @@ namespace Unchuris_04 {
 
             int rsaBlockSize = Generate.KEY_LENGT_BITS;
 
-            byte[] data = source.SubArray(TRASH_BLOCK, source.Length - TRASH_BLOCK);
-
-            StringBuilder bits = new StringBuilder(data.ToBitsString());
+            StringBuilder bits = new StringBuilder(source.ToBitsString());
 
             if (bits.Length % rsaBlockSize != 0) {
                 ShowErrorMessage();
                 return;
             }
 
-            BigInteger messageRealLength = new BigInteger(source.SubArray(HASH_SIZE, 4).Concat(new byte[] { 0 }).ToArray());
-
             for (int i = 0; i < bits.Length; i += rsaBlockSize) {
                 string blockMessage = bits.ToString(i, rsaBlockSize);
                 result.Append(DecryptBlock(blockMessage));
             }
 
-            string dataBlock = result.ToString(0, (int)messageRealLength);
+            int tempSize = (int)(result.ToString().Substring(result.Length - 16).ToBigInteger());
+            int addBitsCount = tempSize + blockSize;
 
-            byte[] currentHashMessage = GetHash(dataBlock);
+            string resultString = result.ToString().Substring(0, result.Length - addBitsCount);
 
-            byte[] hashMessage = source.SubArray(0, HASH_SIZE);
-
-            if (currentHashMessage.SequenceEqual(hashMessage)) {
-                CustomFile.WriteAllBytes(dataBlock.ToBytes());
-            } else {
-                ShowErrorMessage();
-            }
+            CustomFile.WriteAllBytes(resultString.ToBytes());
         }
 
         private static string EncryptBlock(string block) {
@@ -91,24 +81,7 @@ namespace Unchuris_04 {
         private static string DecryptBlock(string block) {
             BigInteger bigInt = BigInteger.ModPow(block.ToBigInteger(), d, n);
             string decrypt = bigInt.ToBinaryString();
-            return decrypt.PadLeft(blockSize - 1, '0'); 
-        }
-
-        private static byte[] GetBytesToCheckMessage(string bits) {
-            byte[] messageSize = new byte[4];
-
-            messageSize[0] = (byte)(bits.Length % 256);
-            messageSize[1] = (byte)(bits.Length % 65536 / 256);
-            messageSize[2] = (byte)(bits.Length % 16777216 / 65536);
-            messageSize[3] = (byte)(bits.Length / 16777216);
-
-            byte[] result = new byte[HASH_SIZE + messageSize.Length];
-
-            Array.Copy(GetHash(bits), result, HASH_SIZE);
-
-            Array.Copy(messageSize, 0, result, HASH_SIZE, messageSize.Length);
-
-            return result;
+            return decrypt.PadLeft(blockSize, '0'); 
         }
 
         private static byte[] GetHash(string bits) {
@@ -122,12 +95,12 @@ namespace Unchuris_04 {
         private static bool GetPublicKey() {
             byte[] key = CustomFile.OpenFile("открытого ключа");
 
-            if (key.Length != Generate.KEY_LENGT_BYTE / 2) {
+            if (key.Length != Generate.KEY_LENGT_BYTE / 2 + 1) {
                 Console.WriteLine("Ключ поврежден!");
                 return false;
             }
 
-            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
+            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2 + 1));
 
             blockSize = (int)Math.Floor(BigInteger.Log(n, 2));
             Console.WriteLine("Выполнение...");
@@ -137,15 +110,15 @@ namespace Unchuris_04 {
         private static bool GetPrivateKey() {
             byte[] key = CustomFile.OpenFile("закрытого ключа");
 
-            if (key.Length < Generate.KEY_LENGT_BYTE / 2) {
+            if (key.Length < Generate.KEY_LENGT_BYTE / 2 + 1) {
                 Console.WriteLine("Ключ поврежден!");
                 return false;
             }
 
-            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2));
-            d = new BigInteger(key.SubArray(Generate.KEY_LENGT_BYTE / 2, Generate.KEY_LENGT_BYTE));
+            n = new BigInteger(key.SubArray(0, Generate.KEY_LENGT_BYTE / 2 + 1));
+            d = new BigInteger(key.SubArray(Generate.KEY_LENGT_BYTE / 2 + 1, Generate.KEY_LENGT_BYTE));
 
-            blockSize = (int)Math.Ceiling(BigInteger.Log(n, 2));
+            blockSize = (int)Math.Floor(BigInteger.Log(n, 2));
             Console.WriteLine("Выполнение...");
             return true;
         }
@@ -162,19 +135,16 @@ namespace Unchuris_04 {
                 BigInteger fi, d;
                 int size = KEY_LENGT_BYTE / 2;
 
-                do {
-                    generateNumber();
+                generateNumber();
 
-                    fi = (p - 1) * (q - 1);
+                fi = (p - 1) * (q - 1);
 
-                    d = Euclid.ModInverse(e, fi);
+                d = Euclid.ModInverse(e, fi);
 
-                    if ((e * d) % fi != 1 && d != 0) {
-                        GenerateKey();
-                        return;
-                    }
-
-                } while (n.ToByteArray().Length != size);
+                if ((e * d) % fi != 1 && d != 0) {
+                    GenerateKey();
+                    return;
+                }
 
                 Console.WriteLine("Открытый ключ записан в файл public_key.txt, закрытый - в private_key.txt");
                 File.WriteAllBytes("public_key.txt", n.ToByteArray().ToArray());
@@ -182,9 +152,11 @@ namespace Unchuris_04 {
             }
 
             public static void generateNumber() {
-                q = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT);
-                p = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT - 1);
-                n = p * q;
+                do {
+                    q = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT);
+                    p = BigIntegerExtensions.GetBigIntegerRandomPrimeNumber(Generate.KEY_LENGT);
+                    n = p * q;
+                } while (n.GetBitLength() != KEY_LENGT_BITS);
             }
         }
     }

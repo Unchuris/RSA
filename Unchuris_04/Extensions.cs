@@ -6,6 +6,12 @@ using System.Text;
 namespace Unchuris_04 {
     static class Extensions {
 
+        public static string PadLeftRandom(this string source, int size) {
+            string result = source.PadLeft(16, '0');
+            result = GetRandomString(size - result.Length) + result;
+            return result;
+        }
+
         public static string ToBitsString(this byte[] source) {
             StringBuilder result = new StringBuilder();
 
@@ -27,20 +33,12 @@ namespace Unchuris_04 {
         }
 
         public static string ToBinaryString(this BigInteger source) {
-            byte[] bytes = source.ToByteArray();
-            int id = bytes.Length - 1;
-
-            StringBuilder base2 = new StringBuilder(bytes.Length * 8);
-
-            string binary = Convert.ToString(bytes[id], 2);
-
-            base2.Append(binary);
-
-            for (id--; id >= 0; id--) {
-                base2.Append(Convert.ToString(bytes[id], 2).PadLeft(8, '0'));
+            string result = "";
+            while (source > 0) {
+                result = (source % 2).ToString() + result;
+                source = source >> 1;
             }
-
-            return base2.ToString();
+            return result;
         }
         public static BigInteger ToBigInteger(this string value) {
             BigInteger res = 0;
@@ -104,6 +102,17 @@ namespace Unchuris_04 {
             }
 
             return true;
+        }
+
+        public static string GetRandomString(int size) {
+            Random random = new Random();
+            byte[] result = new byte[size];
+            random.NextBytes(result);
+            StringBuilder stringBuilder = new StringBuilder();
+            for (int i = 0; i < size; i++) {
+                stringBuilder.Append((char)i);
+            }
+            return stringBuilder.ToString();
         }
     }
 }

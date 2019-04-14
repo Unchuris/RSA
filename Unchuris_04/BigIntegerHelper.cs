@@ -15,6 +15,18 @@ namespace Unchuris_04 {
             return n;
         }
 
+        public static int GetBitLength(this BigInteger source) {
+            int bitLength = 0;
+
+            do {
+                bitLength++;
+                source /= 2;
+            } while (source != 0);
+
+            Console.WriteLine(bitLength);
+            return bitLength;
+        }
+
         private static BigInteger NextBigInteger(int bitLength) {
             if (bitLength < 1) return BigInteger.Zero;
 
